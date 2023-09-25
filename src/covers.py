@@ -5,6 +5,9 @@ import pandas as pd
 from torchvision.io import read_image
 from torch.utils.data import Dataset
 from torchvision.transforms import Resize
+from torch.utils.data import DataLoader
+import torch.nn as nn
+import torch
 
 class CoverNotFound(Exception):
     pass
@@ -48,3 +51,21 @@ class CoversDataset(Dataset):
         label = row['label']
         image = self.resize(read_image(imagepath))
         return image, label
+
+# Now we build our model.
+class CoversGenreModel(nn.Module):
+    def __init__(self, outputsize):
+        super().__init__()
+        self.outputsize = outputsize
+
+        self.conv2d = torch.nn.Conv2d(3, 1, (3,3))
+    
+    def forward(self, batch):
+        output = self.conv2d(batch).squeeze(1)
+        batchsize = output.size[0]
+        dim1 = output.size()[1]
+        dim2 = output.size()[2]
+        output = output.view((batchsize, dim1*dim2))
+        return torch.log_softmax(output, 1)
+
+
