@@ -12,6 +12,8 @@ from tqdm import tqdm
 from torch import optim
 from sklearn.metrics import confusion_matrix
 
+device = "cuda:2"
+
 class CoverNotFound(Exception):
     pass
 
@@ -52,7 +54,7 @@ class CoversDataset(Dataset):
         row = self.covertable.iloc[idx]
         imagepath = os.path.join(self.imgroot, row['img_paths'])
         label = row['label']
-        image = self.resize(read_image(imagepath)).float()
+        image = self.resize(read_image(imagepath)).float().to(device)
         return image, label
 
 # Now we build our model.
@@ -77,14 +79,14 @@ def create_env(tablefilename, imgroot, imgsize, testsize=0.3, actualsize=1.0):
     dataset = CoversDataset(tablefilename, imgroot, imgsize)
     actualset, _ = random_split(dataset, (actualsize, 1.0-actualsize))
     train_set, test_set = random_split(actualset, (1.0-testsize, testsize))    
-    model = CoversGenreModel(33, imgsize[0], imgsize[1])
+    model = CoversGenreModel(33, imgsize[0], imgsize[1]).to(device)
 
     return train_set, test_set, model
 
 def train(train_set, model, epochs=25, batch_size=50):
     trainloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
 
-    criterion = nn.NLLLoss()
+    criterion = nn.NLLLoss().to(device)
     optimizer = optim.Adam(model.parameters())
     
     for epoch in range(epochs):
@@ -92,6 +94,7 @@ def train(train_set, model, epochs=25, batch_size=50):
         for i, batch in enumerate(tqdm(trainloader)):
             optimizer.zero_grad()
             X, y = batch
+            y = y.to(device)
             output = model(X)
             loss = criterion(output, y)
             loss.backward()
