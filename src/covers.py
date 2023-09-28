@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch
 from tqdm import tqdm
 from torch import optim
+from sklearn.metrics import confusion_matrix
 
 class CoverNotFound(Exception):
     pass
@@ -72,9 +73,10 @@ class CoversGenreModel(nn.Module):
         output = self.linear(output)
         return torch.log_softmax(output, 1)
 
-def create_env(tablefilename, imgroot, imgsize, testsize=0.3):
+def create_env(tablefilename, imgroot, imgsize, testsize=0.3, actualsize=1.0):
     dataset = CoversDataset(tablefilename, imgroot, imgsize)
-    train_set, test_set = random_split(dataset, (1.0-testsize, testsize))    
+    actualset, _ = random_split(dataset, (actualsize, 1.0-actualsize))
+    train_set, test_set = random_split(actualset, (1.0-testsize, testsize))    
     model = CoversGenreModel(33, imgsize[0], imgsize[1])
 
     return train_set, test_set, model
@@ -93,8 +95,29 @@ def train(train_set, model, epochs=25, batch_size=50):
             output = model(X)
             loss = criterion(output, y)
             loss.backward()
-            total_loss += int(loss)
+            total_loss += float(loss)
             optimizer.step()
 
         print("At epoch {}, we get loss {}.".format(epoch, total_loss))
 
+def test(test_set, model):
+    with torch.no_grad():
+        correct = 0
+        predicted = []
+        actual = []
+        for item in range(len(test_set)):
+            output = model(test_set[item][0])
+            expected = test_set[item][1]
+            output = torch.argmax(output)
+            predicted.append(int(output))
+            actual.append(int(expected))
+            if output == expected:
+                correct += 1.0
+            
+        
+        accuracy = correct/len(test_set)
+        matrix = confusion_matrix(actual, predicted)
+        print("Accuracy = {}".format(accuracy))
+        print("Confusion = {}".format(matrix))
+        return accuracy, matrix
+        
