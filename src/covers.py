@@ -36,11 +36,26 @@ def get_covers_table(tablefilename):
     return pd.read_csv(tablefilename, index_col=None)
 
 class CoversDataset(Dataset):
-    def __init__(self, tablefilename, imgroot, size):
-        self.covertable = get_covers_table(tablefilename)
+    def __init__(self, tablefilename, imgroot, size, actualsize=1.0):
+        self.covertable = get_covers_table(tablefilename).sample(frac=actualsize)
         self.imgroot = imgroot
         self.resize = Resize(size)
+        
+        images = []
+        bad_indices = []
+        for index, row in tqdm(self.covertable.iterrows(), total=len(self.covertable)):
+            imagepath = os.path.join(self.imgroot, row['img_paths'])
+            the_image = self.resize(read_image(imagepath)).float()
+            if the_image.size()[0] != 3:
+                print("rejecting image {} with bad dimensions {}".format(imagepath, the_image.size()))
+                bad_indices.append(index)
+                continue
+            images.append(the_image)
 
+        self.covertable.drop(bad_indices, inplace=True)
+
+        self.allimgs = torch.stack(images).to(device)
+        
         categorylist = list(set(list(self.covertable['category'])))
         categoryvals = list(range(len(categorylist)))
         self.cat2label = dict(zip(categorylist, categoryvals))
@@ -54,7 +69,7 @@ class CoversDataset(Dataset):
         row = self.covertable.iloc[idx]
         imagepath = os.path.join(self.imgroot, row['img_paths'])
         label = row['label']
-        image = self.resize(read_image(imagepath)).float().to(device)
+        image = self.allimgs[idx]
         return image, label
 
 # Now we build our model.
@@ -75,19 +90,39 @@ class CoversGenreModel(nn.Module):
         output = self.linear(output)
         return torch.log_softmax(output, 1)
 
+class CoversGenreTanhModel(CoversGenreModel):
+    def __init__(self, outputsize, xdim, ydim, hidden=1000, dropout=0.01):
+        super().__init__(outputsize, xdim, ydim)
+        self.tanh = torch.nn.Tanh()
+        self.linear0 = torch.nn.Linear(xdim*ydim, hidden)
+        self.relu = torch.nn.ReLU()
+        self.linear = torch.nn.Linear(hidden, outputsize)
+        self.dropout = torch.nn.Dropout(dropout)
+
+    def forward(self, batch):
+        output = self.conv2d(batch).squeeze(1)
+        batchsize = output.size()[0]
+        dim1 = output.size()[1]
+        dim2 = output.size()[2]
+        output = output.view((batchsize, dim1*dim2))
+        output = self.relu(output)
+        output = self.linear0(output)
+        output = self.dropout(output)
+        output = self.tanh(output)
+        output = self.linear(output)
+        return torch.log_softmax(output, 1)
+
 def create_env(tablefilename, imgroot, imgsize, testsize=0.3, actualsize=1.0):
-    dataset = CoversDataset(tablefilename, imgroot, imgsize)
-    actualset, _ = random_split(dataset, (actualsize, 1.0-actualsize))
-    train_set, test_set = random_split(actualset, (1.0-testsize, testsize))    
-    model = CoversGenreModel(33, imgsize[0], imgsize[1]).to(device)
+    dataset = CoversDataset(tablefilename, imgroot, imgsize, actualsize)
+    train_set, test_set = random_split(dataset, (1.0-testsize, testsize))    
 
-    return train_set, test_set, model
+    return train_set, test_set
 
-def train(train_set, model, epochs=25, batch_size=50):
+def train(train_set, model, epochs=25, batch_size=50, lr=0.001):
     trainloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
 
     criterion = nn.NLLLoss().to(device)
-    optimizer = optim.Adam(model.parameters())
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     
     for epoch in range(epochs):
         total_loss = 0
